@@ -1,0 +1,217 @@
+import gwy, glob, sys, os, re, csv	#importing required modules into pygwy
+
+#The folder to post-process if running the code once:
+path='C:/1.Section 1/A2/Unflattened/'	
+
+##The location of all the files for each of the samples, if iterating over all of them at once:
+   
+root ='F:/DATA/1.Data/2.SiC 140um Blinds/3.ILC Repeat/'
+root2 ='F:/DATA/1.Data/2.SiC 140um Blinds/1.ILC/2.Section 2/'
+#The location of all the files for each of the samples, if iterating over all of them at once:
+All_paths=[root+'3.Section 3/A01/Unflattened/',
+	   root+'1.Section 1/A02/Unflattened/',
+	   root+'3.Section 3/A03/Unflattened/',
+	   root+'1.Section 1/A04/Unflattened/',
+	   root+'1.Section 1/A05/Unflattened/',
+	   root+'1.Section 1/A06/Unflattened/',
+	   root+'1.Section 1/A07/Unflattened/',
+	   root2+'A08/Unflattened/',
+	   root2+'A09/Unflattened/',
+	   root2+'A10/Unflattened/']
+	   
+filetag = "_fixzero"				#The filetag at the end of the filename to add to the end of the .gwy and .jpg files
+tablefilename = "fixed_zero_stats_04.txt"	#The name of the quantitative data file. Currently set to "fixed_zero_stats_04.txt"
+
+def rename_filenumbers(path):		
+	"""
+	Making all frame numbers in the file name the same digit length so they get sorted in the correct order. 
+	Currently set to making everything 3 digits in length. Will need to be adjusted for scans that have 1000+ frames
+    """
+	os.chdir(path)
+	global frame_no, filename_no
+	regex = re.compile(r'\d+')				#finds all numbers
+	filesearch_counter=0
+	for filename in glob.glob('*.gsf'):
+	    if filesearch_counter>5:				#If counter tally (see later) exceeds 5 files, then break the loop 	    							
+	    	print('\n.gsf files in "'+path[0:89]+'" have already been renamed')	#print which path has been renamed
+	    	break
+	    if len(filename)>42:				#Checks if files have been shortened and renamed already
+	        filename_no = regex.findall(filename)			#finds all filenumbers in a filename
+	        frame_no = filename_no[6]				#selects the 6th number in the file name i.e. the frame number
+	        if len(frame_no)== 2:
+                    os.rename(filename,filename[0:28]+'0'+filename[29:37]+'.gsf') 	#adds an extra 0 before any frame numbers that are 2 digits long and removes double spacing
+	        elif len(frame_no)== 1:
+                    os.rename(filename,filename[0:28]+'00'+filename[29:36]+'.gsf')	#adds an extra 00 before any frame numbers that are 1 digit long and removes double spacing
+	        elif len(frame_no)== 3:
+                    os.rename(filename,filename[0:28]+filename[29:38]+'.gsf')		#removes double spacing and shortens the name
+	        else:
+	    	    pass
+	    else:						#If the filename is short... add its to the counter tally
+	    	filesearch_counter+=1
+	        pass
+	print("Completed file renaming")
+
+def metadata():
+	"""
+    A function to find the pixel dimensions and physical dimensions of a set of images, and recording the positions of the line profiles.
+	It also determines where the 3 horizontal line profiles are taken from which are determined by the y coordinates (y01, y02 and y03)
+    """
+	filenames=glob.glob('*.gsf')         
+	container = gwy.gwy_app_file_load(filenames[0])
+	for i in gwy.gwy_app_data_browser_get_data_ids(container):
+	    gwy_app_data_browser_select_data_field(container, 0)
+	    data_field = gwy.gwy_app_data_browser_get_current(gwy.APP_DATA_FIELD)
+	    #Pixel width and height of image
+	    xres, yres = data_field.get_xres(),data_field.get_yres()
+	    #Physical dimensions of image
+	    xreal, yreal = data_field.get_xreal(), data_field.get_yreal()
+	    gwy_app_data_browser_remove(container)
+	    gwy.gwy_app_file_close()
+	    #Pixel size
+	    xpixelsize=xreal/xres
+	    ypixelsize=yreal/yres
+
+	#Horizontal line profile position 1
+	y01=yres/4
+
+	#Horizontal profile position 2
+	y02=yres/2
+
+	#Horizontal profile position 3
+	y03=(yres*3)/4
+
+	#Common profile parameters
+	x_start=0
+	x_finish=xres-1
+
+	#Save dimensions and profile positions to a .txt file
+	f = open("Metadata for Lineprofiles.txt", "w+") 
+	f.write("=======Metadata for all images and line profiles from this folder======="
+	+"\n      Image Pixel Dimensions (px) :  "+str(xres)+" x "+str(yres)
+	+"\n    Image Physical Dimensions (m) :  "+str(xreal)+" x "+str(yreal)
+	+"\n                   Pixel Size (m) :  "+str(xpixelsize)+" x "+str(ypixelsize)
+	+"\n\n\n--Horizontal Line Profile 1--\n   Start (x0,y0) :  ("+str(x_start)+", "+str(y01)+")\n     End (x1,y1) :  ("+str(x_finish)+", "+str(y01)+")"
+	+"\n\n--Horizontal Line Profile 2--\n   Start (x0,y0) :  ("+str(x_start)+", "+str(y02)+")\n     End (x1,y1) :  ("+str(x_finish)+", "+str(y02)+")"
+	+"\n\n--Horizontal Line Profile 3--\n   Start (x0,y0) :  ("+str(x_start)+", "+str(y03)+")\n     End (x1,y1) :  ("+str(x_finish)+", "+str(y03)+")"
+	+"\n\nLine Profile Thickness = 1px"+"\n\n\n")
+	f.close()
+	return y01, y02, y03, x_start, x_finish		
+
+def post_process(filepathway):
+	"""The main post-processing script on all of the "raw data" .gsf files"""	
+	Linescan_stepsize_um=25		#stepsize for the linescan
+	x = 0				#main for loop file counter
+	nx = 0				#step counter
+	old_filename=""			#initialising previous frame's filename string
+	old_nth_site=0			#initialising previous frame's site number
+	regex = re.compile(r'\d+')
+	
+	y01, y02, y03, x_start, x_finish = metadata()	#Create the metadata file and obtain the line locations
+	
+	for line_no, y_line in enumerate([y01, y02, y03], 1):	#...Take each of the horizontal line profile...
+	    tablefilename= "Line_data_" + str(line_no)+".txt"	#Create corresponding line profile .txt filename
+	    #Create .txt file for the current line profile
+	    f = open(tablefilename, "w+")			
+	    f.write("Dist(um) "+"AvgHeight "+"Ra "+"RMS(Rq) "+"skew(Rsk) "+"Rku "+"Rz")    #Ensure no spaces within each header title to allow easy reading. 
+	    f.close()
+			    	
+	orderedfiles = glob.glob('*.gsf')	# Only becomes ordered if all .gsf files have frame numbers that are the same number of digits
+	
+	for filename in glob.glob('*.gsf'):	#for each .gsf file...
+            #Open file and browser
+            container = gwy.gwy_app_file_load(filename)
+	
+	    #Running functions and getting line profile data
+	    for i in gwy.gwy_app_data_browser_get_data_ids(container):
+	    	    
+	        gwy_app_data_browser_select_data_field(container, i)
+	        container['/0/data/visible']=True						# Display data window when open?
+	        container['/0/data/realsquare']=True					# True = physically square, False = pixely square
+	        #container['/0/base/palette']='Gwyddion.net'				# False colour selection as a string
+	        gwy_process_func_run('scars_remove', container, gwy.RUN_IMMEDIATE)
+	        gwy_process_func_run('fix_zero', container, gwy.RUN_IMMEDIATE)
+	    
+	        data = gwy.gwy_app_data_browser_get_current(gwy.APP_DATA_FIELD)
+		xres = data.get_xres() 	#Gets number of pixels in x direction
+	    	xreal = data.get_xreal()	#Gets physical distance in x direction
+	        #Extract the 3 horizontal dataline profiles
+	        dline_1 = data.get_profile(x_start, y01, x_finish, y01, 0, 1, gwy.INTERPOLATION_LINEAR)	#x0, y0, x1, y1 (pixel coordinates); The number of samples to take along line (0 = automatic); thickness; and interpolation.
+	        linedata_1 = dline_1.get_data()
+	    
+	        dline_2 = data.get_profile(x_start, y02, x_finish, y02, 0, 1, gwy.INTERPOLATION_LINEAR)	#x0, y0, x1, y1 (pixel coordinates); The number of samples to take along line (0 = automatic); thickness; and interpolation.
+	        linedata_2 = dline_2.get_data()
+	    
+	        dline_3 = data.get_profile(x_start, y03, x_finish, y03, 0, 1, gwy.INTERPOLATION_LINEAR)	#x0, y0, x1, y1 (pixel coordinates); The number of samples to take along line (0 = automatic); thickness; and interpolation.
+	        linedata_3 = dline_3.get_data()
+	        
+	    #Calculating length along the monofilament   
+	    regex.findall(filename)
+	    filename_no = regex.findall(filename)
+	    frame_no = int(filename_no[6])
+	    nth_frame=(frame_no+1)/2 +1
+	    
+	    #find the nth site in a scan - only works for 2frames/site
+	    if (nth_frame%2)==1:
+	        nth_site=(nth_frame+1)/2
+	    else:
+	        nth_site=nth_frame/2
+
+	    #adding 1 unit of stepsize to the step counter 'nx'    	    
+	    if filename[13:21] == old_filename[13:21] and nth_site != old_nth_site:	#!= means does not equal i.e. new sampling site but same scan
+	        nx += 1   	
+	    else:
+	        pass
+    
+	    Dist = Linescan_stepsize_um*nx
+	    old_filename = filename	#Required logic for calculation of distance along fibre
+	    old_nth_site = nth_site	#Required logic for calculation of distance along fibre
+	    
+	    ##Save file as .gwy 
+	    gwy.gwy_file_save(container, os.path.splitext(filename)[0] + filetag +'.gwy', gwy.RUN_NONINTERACTIVE) 
+
+	    ##Save 2D plot as .jpg
+	    gwy_file_save(container, os.path.splitext(filename)[0] + filetag +'.jpg', gwy.RUN_NONINTERACTIVE)
+
+	    #close file
+	    gwy_app_data_browser_remove(container)
+	    gwy.gwy_app_file_close()
+
+	    ##for each horizontal line profile, find the associated roughness data and save it    
+	    for line_no, dline in enumerate ([dline_1, dline_2, dline_3], 1):    
+	        avg = dline.get_avg()
+	    	linelength=dline.get_length() #length of the path over features
+	    	real_length=dline.get_real()  #length across the plane
+	    	ra=dline.get_ra()
+	    	rms=dline.get_rms()
+	    	skew=dline.get_skew()
+	    	kurtosis=dline.get_kurtosis()
+	    	min,max = dline.get_min_max()
+	    	zmax=max-min
+
+	    	# Save line roughness parameters to stats file
+	    	tablefilename= "Line_data_" + str(line_no)+".txt"	#Ensure reading correct .txt filename
+	    	with open(tablefilename, "a") as file_object:
+			file_object.write("\n"+str(Dist)+" "+str(avg)+" "+str(ra)+" "+str(rms)+" "+str(skew)+" "+str(kurtosis)+" "+str(zmax))
+	    	file_object.close()
+
+	    ##Save raw distribution of heights and corresponding x distance for each profile as new .txt for each .gwy file
+	    
+	    for line_no, linedata in enumerate([linedata_1, linedata_2, linedata_3],1):
+	    	f= open(os.path.splitext(filename)[0] + "_line_profile_"+str(line_no)+"_data.txt","w+")
+	    	f.write("X_Distance(m) "+"Height(m)\n")
+	    	for row_number, row in enumerate(linedata):
+		    x_distance=(xreal/1000)*row_number
+		    f.write(str(x_distance)+" "+str(row)+"\n")
+	    	f.close()
+
+	    x += 1      #loop counter
+		    	    
+	print '====Completed===='
+
+
+#RUNNING THE FOLLOWING LINES IMMEDIATELY:
+for r in All_paths:	
+	#Iterates over all sample folders and post-processes all of the .gsf files and obtains the quantified stats
+	os.chdir(r)
+	rename_filenumbers(r)
+	post_process(r)

@@ -1,0 +1,138 @@
+import gwy, glob, sys, os, re, csv	#importing required modules into pygwy
+
+#The folder to post-process if running the code once:
+path='.../SS Flattened/'	
+
+root ='F:/DATA/1.Data/2.SiC 140um Blinds/3.ILC Repeat/'
+root ='F:/DATA/1.Data/2.SiC 140um Blinds/1.ILC/2.Section 2/'
+#The location of all the files for each of the samples, if iterating over all of them at once:
+All_paths=[root+'3.Section 3/A01/SS Flattened/',
+	   #root+'1.Section 1/A02/SS Flattened/',
+	   root+'3.Section 3/A03/SS Flattened/',
+	   #root+'1.Section 1/A04/SS Flattened/',
+	   #root+'1.Section 1/A05/SS Flattened/',
+	   #root+'1.Section 1/A06/SS Flattened/']
+	   #root+'1.Section 1/A07/SS Flattened/',
+	   #root+'1.Section 1/A08/SS Flattened/',
+	   #root+'1.Section 1/A09/SS Flattened/',
+	   #root+'1.Section 1/A10/SS Flattened/']
+
+filetag = "_fixzero"				#The filetag at the end of the filename to add to the end of the .gwy and .jpg files
+tablefilename = "fixed_zero_stats_04.txt"	#The name of the quantitative data file. Currently set to "fixed_zero_stats_04.txt"
+
+def rename_filenumbers(path):		
+	"""
+	Making all frame numbers in the file name the same digit length so they get sorted in the correct order. 
+	Currently set to making everything 3 digits in length. Will need to be adjusted for scans that have 1000+ frames.
+    """
+	os.chdir(path)
+	global frame_no, filename_no
+	regex = re.compile(r'\d+')				#finds all numbers
+	filesearch_counter=0
+	for filename in glob.glob('*.gsf'):
+	    if filesearch_counter>5:				#If counter tally (see later) exceeds 5 files, then break the loop 	    							
+	    	print('\n.gsf files in "'+path[0:89]+'" have already been renamed')	#print which path has been renamed
+	    	break
+	    if len(filename)>42:				#Checks if files have been shortened and renamed already
+	        filename_no = regex.findall(filename)			#finds all filenumbers in a filename
+	        frame_no = filename_no[6]				#selects the 6th number in the file name i.e. the frame number
+	        if len(frame_no)== 2:
+                os.rename(filename,filename[0:28]+'0'+filename[29:37]+'.gsf') 	#adds an extra 0 before any frame numbers that are 2 digits long
+	        elif len(frame_no)== 1:
+                os.rename(filename,filename[0:28]+'00'+filename[29:36]+'.gsf')	#adds an extra 00 before any frame numbers that are 1 digit long
+	        elif len(frame_no)== 3:
+                os.rename(filename,filename[0:28]+filename[29:38]+'.gsf')
+	        else:
+                pass
+	    else:						#If the filename is short... add its to the counter tally
+	    	filesearch_counter+=1
+	        pass
+	print("Completed file renaming")
+		
+
+def post_process(filepathway):
+	"""The main post-processing script on all of the "raw data" .gsf files"""	
+	Linescan_stepsize_um=25		#stepsize for the linescan
+	x = 0				#for loop file counter
+	nx = 0				#step counter
+	old_filename=""			#initialising previous frame's filename string
+	old_nth_site=0			#initialising previous frame's site number
+	regex = re.compile(r'\d+')
+
+	#Creating .txt file with the following name and headlines for the roughness data to be exported to
+	f = open(tablefilename, "w+")
+	f.write("Dist(um) "+"AvgHeight "+"Sa "+"RMS(Sq) "+"skew(Ssk) "+"Kurtosis "+"zMax")    #Trying to ensure no spaces within each header to allow easy reading. 
+	f.close()
+		
+	rename_filenumbers(filepathway)		# runs the renaming of .gsf files to have the same number of digits (function is defined above)	    	
+	orderedfiles = glob.glob('*.gsf')	# Only becomes ordered if all .gsf files have frame numbers that are the same number of digits
+	
+	#for each file in the folder...
+	for filename in orderedfiles:            
+	    #Open the file and browser
+	    container = gwy.gwy_app_file_load(filename)
+	    #Running the post-processing Gwyddion functions for each data channel in the file. Only has height data, so this logic is fine
+	    for i in gwy.gwy_app_data_browser_get_data_ids(container):
+		    gwy_app_data_browser_select_data_field(container, i)		# Select the data channel to post-process
+		    container['/0/data/visible']=True					# Display data window when open?
+		    container['/0/data/realsquare']=True				# True = physically square, False = pixely square
+		    #container['/0/base/palette']='Gwyddion.net'			# False colour selection as a string, if required to change the colour
+		    gwy_process_func_run('scars_remove', container, gwy.RUN_IMMEDIATE)	# Removes scarring from images
+		    gwy_process_func_run('fix_zero', container, gwy.RUN_IMMEDIATE)	# Sets the lowest height value to zero
+
+		    data = gwy.gwy_app_data_browser_get_current(gwy.APP_DATA_FIELD)	# Reading the data of the file
+	        
+	    #Calculating length along the monofilament"""    
+	    regex.findall(filename)
+	    filename_no = regex.findall(filename)
+	    frame_no = int(filename_no[6])
+	    nth_frame=(frame_no+1)/2 +1
+	    
+	    #find the nth site in a scan - only works for 2frames/site
+	    if (nth_frame%2)==1:
+	    	nth_site=(nth_frame+1)/2
+	    else:
+	    	nth_site=nth_frame/2
+	    
+	    #adding 1 unit of stepsize to the step counter 'nx'    	    
+	    if filename[13:21] == old_filename[13:21] and nth_site != old_nth_site:	#!= means does not equal i.e. new sampling site but same scan
+	    	nx += 1   	
+	    else:
+	    	pass
+	    
+	    Dist = Linescan_stepsize_um*nx    
+	    
+	    
+	    #Computes basic statistical quantities of a data field.
+	    avg, ra, rms, skew, kurtosis = data.get_stats()	#Reads the Average height, the Sa, the Sq, Ssk, Sku from the data
+	    zmin, zmax = data.get_min_max()			#Gets the min/max heights from each frame. Since "fixed_zero" post-processing was used, zmax=Sz. 
+	    
+	    #Appending the stats of this frame to the end of the .txt file
+	    f = open(tablefilename, "a")
+	    f.write("\n"+str(Dist)+" "+str(avg)+" "+str(ra)+" "+str(rms)+" "+str(skew)+" "+str(kurtosis)+" "+str(zmax))
+	    f.close()
+	    
+	    #Save the post-processed file as .gwy, indicating the approximate length along the monofilament
+	    gwy_file_save(container, os.path.splitext(filename)[0] +' ' + str(Dist)+ 'um along' + filetag + '.gwy', gwy.RUN_NONINTERACTIVE)
+	    
+	    #Save the post-processed file as .jpg, indicating the approximate length along the monofilament
+	    gwy_file_save(container, os.path.splitext(filename)[0] +' ' + str(Dist)+ 'um along' + filetag + '.jpg', gwy.RUN_NONINTERACTIVE)
+	    
+	    old_filename = filename	#Required logic for calculation of distance along fibre
+	    old_nth_site = nth_site	#Required logic for calculation of distance along fibre
+	    x += 1      #loop counter
+	    print 'Completed:', x   # counter display
+	    
+	    #close file
+	    gwy_app_data_browser_remove(container)
+	    gwy.gwy_app_file_close()
+	    
+	print('===== Completed =====')
+
+
+#RUNNING THE FOLLOWING LINES IMMEDIATELY:
+for r in All_paths:	
+#	"""Iterates over all sample folders and post-processes all of the .gsf files and obtains the quantified stats"""
+	os.chdir(r)
+	rename_filenumbers(r)
+	post_process(r)
